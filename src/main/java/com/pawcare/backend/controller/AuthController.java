@@ -16,6 +16,7 @@ import com.pawcare.backend.dto.RegisterRequest;
 import com.pawcare.backend.entity.User;
 import com.pawcare.backend.repository.UserRepository;
 import com.pawcare.backend.security.JwtUtil;
+import com.pawcare.backend.service.AuditLogService;
 
 import jakarta.validation.Valid;
 
@@ -26,11 +27,14 @@ public class AuthController {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
+    private final AuditLogService auditLogService;
 
-    public AuthController(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtUtil jwtUtil) {
+    public AuthController(UserRepository userRepository, PasswordEncoder passwordEncoder,
+                           JwtUtil jwtUtil, AuditLogService auditLogService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
+        this.auditLogService = auditLogService;
     }
 
     @PostMapping("/register")
@@ -39,18 +43,25 @@ public class AuthController {
             return ResponseEntity.status(409).body("Email already registered");
         }
 
+        // Defense in depth: never trust a client-supplied ADMIN role, even if
+        // the DTO validation above is ever loosened.
+        String role = req.role();
+        if (!role.equals("OWNER") && !role.equals("PROVIDER")) {
+            return ResponseEntity.status(400).body("Invalid role");
+        }
+
         User user = new User(
                 null,
                 req.name(),
                 req.email(),
                 passwordEncoder.encode(req.password()),
-                List.of(req.role()),
+                List.of(role),
                 Instant.now()
         );
         userRepository.save(user);
 
         String token = jwtUtil.generateToken(user.getId(), user.getRoles());
-        return ResponseEntity.ok(new AuthResponse(token, user.getId(), user.getRoles()));
+        return ResponseEntity.ok(new AuthResponse(token, user.getId(), user.getRoles(), user.getName()));
     }
 
     @PostMapping("/login")
@@ -63,6 +74,9 @@ public class AuthController {
 
         User user = userOpt.get();
         String token = jwtUtil.generateToken(user.getId(), user.getRoles());
-        return ResponseEntity.ok(new AuthResponse(token, user.getId(), user.getRoles()));
+
+        auditLogService.log(user.getId(), "LOGIN", "User", user.getId());
+
+        return ResponseEntity.ok(new AuthResponse(token, user.getId(), user.getRoles(), user.getName()));
     }
 }

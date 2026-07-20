@@ -31,3 +31,4 @@ build/
 
 ### VS Code ###
 .vscode/
+set-env.ps1

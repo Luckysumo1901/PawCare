@@ -1,10 +1,12 @@
 package com.pawcare.backend.entity;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
-import jakarta.persistence.*;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -13,23 +15,14 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 @Entity
-@Table(name = "users")
-public class User {
+@Table(name = "audit_logs")
+public class AuditLog {
     @Id
     private String id;
-
-    private String name;
-
-    @Column(unique = true)
-    private String email;
-
-    private String passwordHash;
-
-    @ElementCollection
-    @CollectionTable(name = "user_roles", joinColumns = @JoinColumn(name = "user_id"))
-    @Column(name = "role")
-    private List<String> roles;
-
+    private String actorId;
+    private String action;
+    private String targetType;
+    private String targetId;
     private Instant createdAt = Instant.now();
 
     @PrePersist
