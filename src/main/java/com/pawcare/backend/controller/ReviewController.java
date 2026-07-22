@@ -15,10 +15,15 @@ import com.pawcare.backend.dto.ReviewResponse;
 import com.pawcare.backend.entity.Booking;
 import com.pawcare.backend.entity.Payment;
 import com.pawcare.backend.entity.Review;
+import com.pawcare.backend.entity.User;
 import com.pawcare.backend.repository.BookingRepository;
 import com.pawcare.backend.repository.PaymentRepository;
+import com.pawcare.backend.repository.ProviderProfileRepository;
 import com.pawcare.backend.repository.ReviewRepository;
+import com.pawcare.backend.repository.UserRepository;
 
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import jakarta.validation.Valid;
 
@@ -29,13 +34,19 @@ public class ReviewController {
     private final ReviewRepository reviewRepository;
     private final BookingRepository bookingRepository;
     private final PaymentRepository paymentRepository;
+    private final ProviderProfileRepository providerProfileRepository;
+    private final UserRepository userRepository;
 
     public ReviewController(ReviewRepository reviewRepository,
                             BookingRepository bookingRepository,
-                            PaymentRepository paymentRepository) {
+                            PaymentRepository paymentRepository,
+                            ProviderProfileRepository providerProfileRepository,
+                            UserRepository userRepository) {
         this.reviewRepository = reviewRepository;
         this.bookingRepository = bookingRepository;
         this.paymentRepository = paymentRepository;
+        this.providerProfileRepository = providerProfileRepository;
+        this.userRepository = userRepository;
     }
 
     // RBAC: only OWNER can leave a review (they're the one who booked the service)
@@ -49,24 +60,20 @@ public class ReviewController {
             return ResponseEntity.status(409).body("This booking already has a review");
         }
 
-        // 1. Load the Booking by req.bookingId() and confirm it exists
         Optional<Booking> bookingOpt = bookingRepository.findById(req.bookingId());
         if (bookingOpt.isEmpty()) {
             return ResponseEntity.status(404).body("Booking not found");
         }
         Booking booking = bookingOpt.get();
 
-        // 2. Confirm booking.getOwnerId().equals(reviewerId)
         if (!booking.getOwnerId().equals(reviewerId)) {
             return ResponseEntity.status(403).body("Not authorized to review this booking");
         }
 
-        // 3. Confirm booking.getStatus() == COMPLETED
         if (!"COMPLETED".equals(booking.getStatus())) {
             return ResponseEntity.status(400).body("Booking is not completed");
         }
 
-        // 4. Load the Payment for this booking and confirm status == PAID
         Optional<Payment> paymentOpt = paymentRepository.findByBookingId(req.bookingId());
         if (paymentOpt.isEmpty() || !"PAID".equals(paymentOpt.get().getStatus())) {
             return ResponseEntity.status(400).body("Booking must be paid before leaving a review");
@@ -74,6 +81,8 @@ public class ReviewController {
 
         Review review = new Review(null, req.bookingId(), reviewerId, req.rating(), req.comment(), null);
         reviewRepository.save(review);
+
+        recalculateProviderAverage(booking.getProviderId());
 
         return ResponseEntity.ok(ReviewResponse.from(review));
     }
@@ -85,5 +94,48 @@ public class ReviewController {
         return reviewRepository.findByBookingId(bookingId)
                 .<ResponseEntity<?>>map(r -> ResponseEntity.ok(ReviewResponse.from(r)))
                 .orElse(ResponseEntity.status(404).body("No review for this booking yet"));
+    }
+
+    // All reviews for a given provider, with reviewer names + running average.
+    // This is the missing "place to see customer reviews" for a provider profile/search card.
+    @GetMapping("/provider/{providerId}")
+    public ResponseEntity<?> getForProvider(@PathVariable String providerId) {
+        List<Booking> providerBookings = bookingRepository.findByProviderId(providerId);
+        List<String> bookingIds = providerBookings.stream().map(Booking::getId).toList();
+
+        if (bookingIds.isEmpty()) {
+            return ResponseEntity.ok(Map.of("reviews", List.of(), "averageRating", 0.0, "count", 0));
+        }
+
+        List<Review> reviews = reviewRepository.findByBookingIdIn(bookingIds);
+
+        Map<String, User> reviewers = userRepository.findAllById(
+                reviews.stream().map(Review::getReviewerId).distinct().toList()
+        ).stream().collect(java.util.stream.Collectors.toMap(User::getId, u -> u));
+
+        List<ReviewResponse> response = reviews.stream()
+                .map(r -> ReviewResponse.from(r, reviewers.containsKey(r.getReviewerId())
+                        ? reviewers.get(r.getReviewerId()).getName() : "Pet Owner"))
+                .sorted((a, b) -> b.createdAt().compareTo(a.createdAt()))
+                .toList();
+
+        double avg = reviews.stream().mapToInt(Review::getRating).average().orElse(0.0);
+
+        return ResponseEntity.ok(Map.of(
+                "reviews", response,
+                "averageRating", Math.round(avg * 10.0) / 10.0,
+                "count", reviews.size()
+        ));
+    }
+
+    private void recalculateProviderAverage(String providerId) {
+        providerProfileRepository.findByUserId(providerId).ifPresent(profile -> {
+            List<Booking> providerBookings = bookingRepository.findByProviderId(providerId);
+            List<String> bookingIds = providerBookings.stream().map(Booking::getId).toList();
+            List<Review> reviews = reviewRepository.findByBookingIdIn(bookingIds);
+            double avg = reviews.stream().mapToInt(Review::getRating).average().orElse(0.0);
+            profile.setAverageRating(Math.round(avg * 10.0) / 10.0);
+            providerProfileRepository.save(profile);
+        });
     }
 }

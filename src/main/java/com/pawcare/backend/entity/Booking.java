@@ -25,6 +25,7 @@ public class Booking {
     private Instant scheduledStart;
     private Instant scheduledEnd;
     private String status; // PENDING, ACCEPTED, IN_PROGRESS, COMPLETED, CANCELLED
+    private String address; // service address, captured from owner at booking time
 
     @PrePersist
     public void prePersist() {

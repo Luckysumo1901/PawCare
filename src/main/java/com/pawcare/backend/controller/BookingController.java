@@ -59,8 +59,10 @@ public class BookingController {
         }
 
         Booking booking = new Booking(null, auth.getName(), req.providerId(), req.petId(),
-                req.serviceType(), req.scheduledStart(), req.scheduledEnd(), "PENDING");
+                req.serviceType(), req.scheduledStart(), req.scheduledEnd(), "PENDING", req.address());
         bookingRepository.save(booking);
+
+        // Owner always sees their own address back in the create response
         return ResponseEntity.ok(BookingResponse.from(booking));
     }
 
@@ -68,11 +70,11 @@ public class BookingController {
     @GetMapping
     public ResponseEntity<?> list(Authentication auth) {
         boolean isAdmin = auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+        String userId = auth.getName();
         List<Booking> bookings;
         if (isAdmin) {
             bookings = bookingRepository.findAll();
         } else {
-            String userId = auth.getName();
             List<Booking> asOwner = bookingRepository.findByOwnerId(userId);
             List<Booking> asProvider = bookingRepository.findByProviderId(userId);
             bookings = new java.util.ArrayList<>(asOwner);
@@ -87,7 +89,7 @@ public class BookingController {
                 ));
 
         return ResponseEntity.ok(bookings.stream()
-                .map(b -> BookingResponse.from(b, paymentStatusByBooking.get(b.getId())))
+                .map(b -> BookingResponse.forViewer(b, paymentStatusByBooking.get(b.getId()), userId, isAdmin))
                 .toList());
     }
 
@@ -126,6 +128,6 @@ public class BookingController {
 
         auditLogService.log(userId, "BOOKING_" + targetStatus, "Booking", booking.getId());
 
-        return ResponseEntity.ok(BookingResponse.from(booking));
+        return ResponseEntity.ok(BookingResponse.forViewer(booking, null, userId, false));
     }
 }

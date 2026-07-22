@@ -11,5 +11,6 @@ public record BookingRequest(
         @NotBlank String petId,
         @NotBlank String serviceType,
         @NotNull @Future Instant scheduledStart,
-        @NotNull @Future Instant scheduledEnd
+        @NotNull @Future Instant scheduledEnd,
+        @NotBlank String address
 ) {}
